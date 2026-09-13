@@ -239,6 +239,8 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
   const timelineBusyRef = useRef(false);
   const renderPausedRef = useRef(false);
   const renderableByAssetIdRef = useRef(new Map<string, THREE.Object3D>());
+  const playbackFrameRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
   const clippingPlanes = useMemo(() => createClipPlanes(clipPlane), [clipPlane]);
 
   useEffect(() => {
@@ -250,6 +252,8 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
     if (!container) {
       return;
     }
+
+    mountedRef.current = true;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(backgroundColor);
@@ -382,8 +386,13 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
     tick();
 
     return () => {
+      mountedRef.current = false;
+      timelineBusyRef.current = false;
       if (frameLoopRef.current !== null) {
         window.cancelAnimationFrame(frameLoopRef.current);
+      }
+      if (playbackFrameRef.current !== null) {
+        window.cancelAnimationFrame(playbackFrameRef.current);
       }
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', onKeyDown);
@@ -473,7 +482,18 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       return;
     }
 
-    const bounds = new THREE.Box3().setFromObject(contentGroupRef.current);
+    const bounds = new THREE.Box3();
+    for (const asset of assets) {
+      if (!asset.visible) {
+        continue;
+      }
+
+      const renderable = renderableByAssetIdRef.current.get(asset.id);
+      if (renderable) {
+        bounds.expandByObject(renderable);
+      }
+    }
+
     if (bounds.isEmpty()) {
       lastFittedAssetSignatureRef.current = assetSignature;
       return;
@@ -517,6 +537,11 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       try {
         await new Promise<void>((resolve) => {
           const animate = (now: number) => {
+            if (!mountedRef.current) {
+              resolve();
+              return;
+            }
+
             const elapsed = now - startedAt;
             const sample = sampleTimeline(keyframes, elapsed);
             camera.position.set(sample.position.x, sample.position.y, sample.position.z);
@@ -527,17 +552,22 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
             }
 
             if (elapsed >= duration) {
+              playbackFrameRef.current = null;
               resolve();
               return;
             }
 
-            window.requestAnimationFrame(animate);
+            playbackFrameRef.current = window.requestAnimationFrame(animate);
           };
 
-          window.requestAnimationFrame(animate);
+          playbackFrameRef.current = window.requestAnimationFrame(animate);
         });
       } finally {
         timelineBusyRef.current = false;
+        if (playbackFrameRef.current !== null) {
+          window.cancelAnimationFrame(playbackFrameRef.current);
+          playbackFrameRef.current = null;
+        }
       }
     },
     captureFrames: async (keyframes, options) => {

@@ -93,6 +93,7 @@ async function encodeVideo(request: ExportVideoRequest): Promise<void> {
 }
 
 export function registerHandlers(): void {
+  ipcMain.removeHandler('dialog:openImportFiles');
   ipcMain.handle('dialog:openImportFiles', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import point cloud or 3D model files',
@@ -116,6 +117,7 @@ export function registerHandlers(): void {
     );
   });
 
+  ipcMain.removeHandler('project:save');
   ipcMain.handle('project:save', async (_, project: ProjectState) => {
     const result = await dialog.showSaveDialog({
       title: 'Save project',
@@ -131,6 +133,7 @@ export function registerHandlers(): void {
     return { path: result.filePath };
   });
 
+  ipcMain.removeHandler('project:load');
   ipcMain.handle('project:load', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Open project',
@@ -150,8 +153,10 @@ export function registerHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler('file:readText');
   ipcMain.handle('file:readText', async (_, filePath: string) => readFile(filePath, 'utf8'));
 
+  ipcMain.removeHandler('dialog:selectExportPath');
   ipcMain.handle('dialog:selectExportPath', async (_, projectName: string, format: 'mp4' | 'webm') => {
     const result = await dialog.showSaveDialog({
       title: 'Choose export file',
@@ -162,6 +167,7 @@ export function registerHandlers(): void {
     return result.canceled ? null : result.filePath;
   });
 
+  ipcMain.removeHandler('video:export');
   ipcMain.handle('video:export', async (_, request: ExportVideoRequest) => {
     await encodeVideo(request);
     return { outputPath: request.options.outputPath };
