@@ -8,8 +8,8 @@ import type { ExportVideoRequest, ProjectState } from '../../common/types';
 const projectFilter = [{ name: 'Point Cloud Rendering Project', extensions: ['pcr.json'] }];
 const importFilters = [
   {
-    name: '3D data',
-    extensions: ['las', 'e57', 'pts', 'xyz', 'obj', 'fbx', 'gltf', 'glb', 'dae']
+    name: 'Initial starter import formats',
+    extensions: ['pts', 'xyz', 'obj']
   }
 ];
 

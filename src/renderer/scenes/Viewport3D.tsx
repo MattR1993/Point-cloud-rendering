@@ -206,6 +206,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
   const pressedKeysRef = useRef(new Set<string>());
   const pointerStateRef = useRef({ active: false, x: 0, y: 0 });
   const navigationModeRef = useRef<NavigationMode>(navigationMode);
+  const lastFittedAssetSignatureRef = useRef('');
   const clippingPlanes = useMemo(() => createClipPlanes(clipPlane), [clipPlane]);
 
   useEffect(() => {
@@ -386,13 +387,18 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       bounds.expandByObject(renderable);
     }
 
-    if (!bounds.isEmpty()) {
+    const assetSignature = assets
+      .map((asset) => `${asset.id}:${asset.visible}:${asset.status}:${asset.sourceText?.length ?? 0}`)
+      .join('|');
+
+    if (!bounds.isEmpty() && assetSignature !== lastFittedAssetSignatureRef.current) {
       const center = bounds.getCenter(new THREE.Vector3());
       const size = bounds.getSize(new THREE.Vector3()).length() || 10;
       currentTargetRef.current.copy(center);
       controls.target.copy(center);
       camera.position.copy(center.clone().add(new THREE.Vector3(size * 0.9, size * 0.6, size * 0.9)));
       camera.lookAt(center);
+      lastFittedAssetSignatureRef.current = assetSignature;
     }
   }, [assets, clippingPlanes, visualizationMode]);
 

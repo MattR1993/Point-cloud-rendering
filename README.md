@@ -31,7 +31,7 @@ The app is scaffolded for LAS, E57, PTS, XYZ, OBJ, FBX, GLTF/GLB, and DAE workfl
 - `OBJ` for polygonal models
 - `XYZ` and `PTS` for point clouds
 
-Additional listed formats appear in the import dialog so the desktop workflow and roadmap are visible, and unsupported formats are clearly surfaced in the UI as planned work.
+The wider LAS, E57, FBX, GLTF/GLB, and DAE roadmap is represented in the project metadata and UI messaging, while the import picker stays limited to the formats this starter build can safely parse today.
 
 ## Export notes
 
