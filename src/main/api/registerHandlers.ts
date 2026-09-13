@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ExportVideoRequest, ProjectState } from '../../common/types';
 
-const projectFilter = [{ name: 'Point Cloud Rendering Project', extensions: ['json'] }];
+const projectFilter = [{ name: 'Point Cloud Rendering Project', extensions: ['pcr'] }];
 const importFilters = [
   {
     name: 'Initial starter import formats',
@@ -119,7 +119,7 @@ export function registerHandlers(): void {
   ipcMain.handle('project:save', async (_, project: ProjectState) => {
     const result = await dialog.showSaveDialog({
       title: 'Save project',
-      defaultPath: `${sanitizeFileName(project.name)}.pcr.json`,
+      defaultPath: `${sanitizeFileName(project.name)}.pcr`,
       filters: projectFilter
     });
 
@@ -142,8 +142,12 @@ export function registerHandlers(): void {
       return null;
     }
 
-    const project = JSON.parse(await readFile(result.filePaths[0], 'utf8')) as ProjectState;
-    return { path: result.filePaths[0], project };
+    try {
+      const project = JSON.parse(await readFile(result.filePaths[0], 'utf8')) as ProjectState;
+      return { path: result.filePaths[0], project };
+    } catch {
+      throw new Error(`The selected file is not a valid Point Cloud Rendering project: ${path.basename(result.filePaths[0])}`);
+    }
   });
 
   ipcMain.handle('file:readText', async (_, filePath: string) => readFile(filePath, 'utf8'));

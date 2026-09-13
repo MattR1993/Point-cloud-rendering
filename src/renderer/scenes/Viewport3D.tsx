@@ -93,7 +93,7 @@ function createClipPlanes(state: ClipPlaneState): THREE.Plane[] {
 function parsePointCloud(text: string): THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> {
   const positions: number[] = [];
   const colors: number[] = [];
-  let hasColor = false;
+  let hasAnyColor = false;
 
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -117,14 +117,18 @@ function parsePointCloud(text: string): THREE.Points<THREE.BufferGeometry, THREE
       const rgb = parts.slice(3, 6).map(Number);
       if (!rgb.some(Number.isNaN)) {
         colors.push(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
-        hasColor = true;
+        hasAnyColor = true;
+      } else {
+        colors.push(1, 1, 1);
       }
+    } else {
+      colors.push(1, 1, 1);
     }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  if (hasColor && colors.length === positions.length) {
+  if (hasAnyColor && colors.length === positions.length) {
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   }
   geometry.computeBoundingSphere();
@@ -133,8 +137,8 @@ function parsePointCloud(text: string): THREE.Points<THREE.BufferGeometry, THREE
     geometry,
     new THREE.PointsMaterial({
       size: 0.08,
-      vertexColors: hasColor,
-      color: hasColor ? undefined : '#93c5fd',
+      vertexColors: hasAnyColor,
+      color: hasAnyColor ? undefined : '#93c5fd',
       transparent: true,
       opacity: 0.95,
       sizeAttenuation: true
@@ -240,7 +244,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
     scene.background = new THREE.Color(backgroundColor);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(60, Math.max(container.clientWidth / Math.max(container.clientHeight, 1), 1), 0.1, 5000);
+    const camera = new THREE.PerspectiveCamera(60, container.clientWidth / Math.max(container.clientHeight, 1), 0.1, 5000);
     camera.position.set(12, 10, 18);
     camera.rotation.order = 'YXZ';
     cameraRef.current = camera;
