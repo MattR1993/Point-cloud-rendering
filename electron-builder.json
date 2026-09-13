@@ -1,0 +1,11 @@
+{
+  "appId": "com.mattr1993.pointcloudrendering",
+  "productName": "Point Cloud Rendering",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "package.json"
+  ]
+}
