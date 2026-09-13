@@ -165,30 +165,38 @@ function styleMaterial(material: THREE.Material, mode: VisualizationMode, clippi
   }
 }
 
-function buildRenderableAsset(asset: ImportedAsset, visualizationMode: VisualizationMode, clippingPlanes: THREE.Plane[]): THREE.Object3D | null {
-  if (!asset.visible || asset.status !== 'ready' || !asset.sourceText) {
+function applyRenderableState(
+  object: THREE.Object3D,
+  mode: VisualizationMode,
+  clippingPlanes: THREE.Plane[],
+  visible: boolean
+): void {
+  object.visible = visible;
+  object.traverse((child) => {
+    const candidate = child as THREE.Mesh | THREE.Points;
+    if ('material' in candidate && candidate.material) {
+      const materials = Array.isArray(candidate.material) ? candidate.material : [candidate.material];
+      for (const material of materials) {
+        styleMaterial(material, mode, clippingPlanes);
+      }
+    }
+  });
+}
+
+function buildRenderableAsset(asset: ImportedAsset): THREE.Object3D | null {
+  if (asset.status !== 'ready' || !asset.sourceText) {
     return null;
   }
 
   if (asset.format === 'xyz' || asset.format === 'pts') {
     const points = parsePointCloud(asset.sourceText);
     points.name = asset.name;
-    styleMaterial(points.material, visualizationMode, clippingPlanes);
     return points;
   }
 
   if (asset.format === 'obj') {
     const object = new OBJLoader().parse(asset.sourceText);
     object.name = asset.name;
-    object.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const material of materials) {
-          styleMaterial(material, visualizationMode, clippingPlanes);
-        }
-      }
-    });
     return object;
   }
 
@@ -227,7 +235,10 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
   const pointerStateRef = useRef({ active: false, x: 0, y: 0 });
   const navigationModeRef = useRef<NavigationMode>(navigationMode);
   const lastFittedAssetSignatureRef = useRef('');
+  const lastParsedAssetSignatureRef = useRef('');
   const timelineBusyRef = useRef(false);
+  const renderPausedRef = useRef(false);
+  const renderableByAssetIdRef = useRef(new Map<string, THREE.Object3D>());
   const clippingPlanes = useMemo(() => createClipPlanes(clipPlane), [clipPlane]);
 
   useEffect(() => {
@@ -274,6 +285,11 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       const now = performance.now();
       const delta = (now - lastFrame) / 1000;
       lastFrame = now;
+
+      if (renderPausedRef.current) {
+        frameLoopRef.current = window.requestAnimationFrame(tick);
+        return;
+      }
 
       const activeNavigationMode = navigationModeRef.current;
       const activeCamera = cameraRef.current;
@@ -394,19 +410,53 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       return;
     }
 
+    const parsedAssetSignature = assets
+      .map((asset) => `${asset.id}:${asset.status}:${asset.format}:${asset.sourceText?.length ?? 0}`)
+      .join('|');
+
+    if (parsedAssetSignature === lastParsedAssetSignatureRef.current) {
+      return;
+    }
+
     for (const child of [...contentGroupRef.current.children]) {
       disposeObject3D(child);
       contentGroupRef.current.remove(child);
     }
+    renderableByAssetIdRef.current.clear();
 
     for (const asset of assets) {
-      const renderable = buildRenderableAsset(asset, visualizationMode, clippingPlanes);
+      const renderable = buildRenderableAsset(asset);
       if (!renderable) {
         continue;
       }
+      renderable.userData.assetId = asset.id;
       contentGroupRef.current.add(renderable);
+      renderableByAssetIdRef.current.set(asset.id, renderable);
+    }
+
+    lastParsedAssetSignatureRef.current = parsedAssetSignature;
+  }, [assets]);
+
+  useEffect(() => {
+    for (const asset of assets) {
+      const renderable = renderableByAssetIdRef.current.get(asset.id);
+      if (!renderable) {
+        continue;
+      }
+
+      applyRenderableState(renderable, visualizationMode, clippingPlanes, asset.visible);
     }
   }, [assets, clippingPlanes, visualizationMode]);
+
+  useEffect(() => {
+    return () => {
+      for (const child of [...contentGroupRef.current.children]) {
+        disposeObject3D(child);
+        contentGroupRef.current.remove(child);
+      }
+      renderableByAssetIdRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     const camera = cameraRef.current;
@@ -511,6 +561,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       const frames: string[] = [];
 
       timelineBusyRef.current = true;
+      renderPausedRef.current = true;
 
       try {
         renderer.setPixelRatio(1);
@@ -543,6 +594,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
         if (controls) {
           controls.target.copy(originalTarget);
         }
+        renderPausedRef.current = false;
       }
 
       return frames;

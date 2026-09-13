@@ -186,6 +186,8 @@ export function App() {
         return;
       }
       replaceProject(loaded.project, `Loaded project from ${loaded.path}.`);
+    } catch (error) {
+      setStatus(`Load failed: ${(error as Error).message}`);
     } finally {
       setBusy(false);
     }
