@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ExportVideoRequest, ProjectState } from '../../common/types';
 
-const projectFilter = [{ name: 'Point Cloud Rendering Project', extensions: ['pcr.json'] }];
+const projectFilter = [{ name: 'Point Cloud Rendering Project', extensions: ['json'] }];
 const importFilters = [
   {
     name: 'Initial starter import formats',
     extensions: ['pts', 'xyz', 'obj']
   }
 ];
+const textImportExtensions = new Set(['.pts', '.xyz', '.obj']);
 
 function sanitizeFileName(value: string): string {
   return value.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '') || 'flythrough';
@@ -104,11 +105,14 @@ export function registerHandlers(): void {
     }
 
     return Promise.all(
-      result.filePaths.map(async (filePath) => ({
-        name: path.basename(filePath),
-        path: filePath,
-        content: await readFile(filePath, 'utf8')
-      }))
+      result.filePaths.map(async (filePath) => {
+        const extension = path.extname(filePath).toLowerCase();
+        return {
+          name: path.basename(filePath),
+          path: filePath,
+          content: textImportExtensions.has(extension) ? await readFile(filePath, 'utf8') : ''
+        };
+      })
     );
   });
 

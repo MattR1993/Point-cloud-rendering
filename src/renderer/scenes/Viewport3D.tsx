@@ -191,6 +191,22 @@ function buildRenderableAsset(asset: ImportedAsset, visualizationMode: Visualiza
   return null;
 }
 
+function disposeObject3D(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    const candidate = child as THREE.Mesh | THREE.Points;
+    if ('geometry' in candidate && candidate.geometry) {
+      candidate.geometry.dispose();
+    }
+
+    if ('material' in candidate && candidate.material) {
+      const materials = Array.isArray(candidate.material) ? candidate.material : [candidate.material];
+      for (const material of materials) {
+        material.dispose();
+      }
+    }
+  });
+}
+
 export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function Viewport3D(
   { assets, navigationMode, visualizationMode, clipPlane, backgroundColor },
   ref
@@ -207,6 +223,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
   const pointerStateRef = useRef({ active: false, x: 0, y: 0 });
   const navigationModeRef = useRef<NavigationMode>(navigationMode);
   const lastFittedAssetSignatureRef = useRef('');
+  const timelineBusyRef = useRef(false);
   const clippingPlanes = useMemo(() => createClipPlanes(clipPlane), [clipPlane]);
 
   useEffect(() => {
@@ -256,7 +273,7 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
 
       const activeNavigationMode = navigationModeRef.current;
       const activeCamera = cameraRef.current;
-      if (activeCamera && activeNavigationMode !== 'orbit') {
+      if (activeCamera && activeNavigationMode !== 'orbit' && !timelineBusyRef.current) {
         const forward = new THREE.Vector3();
         activeCamera.getWorldDirection(forward);
         if (activeNavigationMode === 'walk') {
@@ -309,14 +326,14 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
     const onKeyDown = (event: KeyboardEvent) => pressedKeysRef.current.add(event.key.toLowerCase());
     const onKeyUp = (event: KeyboardEvent) => pressedKeysRef.current.delete(event.key.toLowerCase());
     const onPointerDown = (event: PointerEvent) => {
-      if (navigationModeRef.current === 'orbit') {
+      if (navigationModeRef.current === 'orbit' || timelineBusyRef.current) {
         return;
       }
       pointerStateRef.current = { active: true, x: event.clientX, y: event.clientY };
     };
     const onPointerMove = (event: PointerEvent) => {
       const activeCamera = cameraRef.current;
-      if (!pointerStateRef.current.active || !activeCamera || navigationModeRef.current === 'orbit') {
+      if (!pointerStateRef.current.active || !activeCamera || navigationModeRef.current === 'orbit' || timelineBusyRef.current) {
         return;
       }
 
@@ -369,14 +386,14 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
   }, [backgroundColor]);
 
   useEffect(() => {
-    const camera = cameraRef.current;
-    const controls = controlsRef.current;
-    if (!camera || !controls) {
+    if (!controlsRef.current) {
       return;
     }
 
-    contentGroupRef.current.clear();
-    const bounds = new THREE.Box3();
+    for (const child of [...contentGroupRef.current.children]) {
+      disposeObject3D(child);
+      contentGroupRef.current.remove(child);
+    }
 
     for (const asset of assets) {
       const renderable = buildRenderableAsset(asset, visualizationMode, clippingPlanes);
@@ -384,23 +401,38 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
         continue;
       }
       contentGroupRef.current.add(renderable);
-      bounds.expandByObject(renderable);
+    }
+  }, [assets, clippingPlanes, visualizationMode]);
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) {
+      return;
     }
 
     const assetSignature = assets
       .map((asset) => `${asset.id}:${asset.visible}:${asset.status}:${asset.sourceText?.length ?? 0}`)
       .join('|');
 
-    if (!bounds.isEmpty() && assetSignature !== lastFittedAssetSignatureRef.current) {
-      const center = bounds.getCenter(new THREE.Vector3());
-      const size = bounds.getSize(new THREE.Vector3()).length() || 10;
-      currentTargetRef.current.copy(center);
-      controls.target.copy(center);
-      camera.position.copy(center.clone().add(new THREE.Vector3(size * 0.9, size * 0.6, size * 0.9)));
-      camera.lookAt(center);
-      lastFittedAssetSignatureRef.current = assetSignature;
+    if (assetSignature === lastFittedAssetSignatureRef.current) {
+      return;
     }
-  }, [assets, clippingPlanes, visualizationMode]);
+
+    const bounds = new THREE.Box3().setFromObject(contentGroupRef.current);
+    if (bounds.isEmpty()) {
+      lastFittedAssetSignatureRef.current = assetSignature;
+      return;
+    }
+
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3()).length() || 10;
+    currentTargetRef.current.copy(center);
+    controls.target.copy(center);
+    camera.position.copy(center.clone().add(new THREE.Vector3(size * 0.9, size * 0.6, size * 0.9)));
+    camera.lookAt(center);
+    lastFittedAssetSignatureRef.current = assetSignature;
+  }, [assets]);
 
   useImperativeHandle(ref, () => ({
     getCameraSnapshot: () => {
@@ -420,31 +452,39 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       if (!camera || keyframes.length < 2) {
         return;
       }
+      if (timelineBusyRef.current) {
+        throw new Error('Timeline playback is already running.');
+      }
 
       const duration = totalDuration(keyframes);
       const startedAt = performance.now();
+      timelineBusyRef.current = true;
 
-      await new Promise<void>((resolve) => {
-        const animate = (now: number) => {
-          const elapsed = now - startedAt;
-          const sample = sampleTimeline(keyframes, elapsed);
-          camera.position.set(sample.position.x, sample.position.y, sample.position.z);
-          currentTargetRef.current.set(sample.target.x, sample.target.y, sample.target.z);
-          camera.lookAt(currentTargetRef.current);
-          if (controls) {
-            controls.target.copy(currentTargetRef.current);
-          }
+      try {
+        await new Promise<void>((resolve) => {
+          const animate = (now: number) => {
+            const elapsed = now - startedAt;
+            const sample = sampleTimeline(keyframes, elapsed);
+            camera.position.set(sample.position.x, sample.position.y, sample.position.z);
+            currentTargetRef.current.set(sample.target.x, sample.target.y, sample.target.z);
+            camera.lookAt(currentTargetRef.current);
+            if (controls) {
+              controls.target.copy(currentTargetRef.current);
+            }
 
-          if (elapsed >= duration) {
-            resolve();
-            return;
-          }
+            if (elapsed >= duration) {
+              resolve();
+              return;
+            }
+
+            window.requestAnimationFrame(animate);
+          };
 
           window.requestAnimationFrame(animate);
-        };
-
-        window.requestAnimationFrame(animate);
-      });
+        });
+      } finally {
+        timelineBusyRef.current = false;
+      }
     },
     captureFrames: async (keyframes, options) => {
       const camera = cameraRef.current;
@@ -453,6 +493,9 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       const scene = sceneRef.current;
       if (!camera || !renderer || !scene || keyframes.length < 2) {
         return [];
+      }
+      if (timelineBusyRef.current) {
+        throw new Error('Timeline playback is already running.');
       }
 
       const originalSize = renderer.getSize(new THREE.Vector2());
@@ -463,34 +506,39 @@ export const Viewport3D = forwardRef<ViewportHandle, Viewport3DProps>(function V
       const frameCount = Math.max(2, Math.ceil((duration / 1000) * options.fps) + 1);
       const frames: string[] = [];
 
-      renderer.setPixelRatio(1);
-      renderer.setSize(options.width, options.height, false);
-      camera.aspect = options.width / Math.max(options.height, 1);
-      camera.updateProjectionMatrix();
+      timelineBusyRef.current = true;
 
-      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-        const elapsed = (frameIndex / Math.max(frameCount - 1, 1)) * duration;
-        const sample = sampleTimeline(keyframes, elapsed);
-        camera.position.set(sample.position.x, sample.position.y, sample.position.z);
-        currentTargetRef.current.set(sample.target.x, sample.target.y, sample.target.z);
-        camera.lookAt(currentTargetRef.current);
-        if (controls) {
-          controls.target.copy(currentTargetRef.current);
+      try {
+        renderer.setPixelRatio(1);
+        renderer.setSize(options.width, options.height, false);
+        camera.aspect = options.width / Math.max(options.height, 1);
+        camera.updateProjectionMatrix();
+
+        for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+          const elapsed = (frameIndex / Math.max(frameCount - 1, 1)) * duration;
+          const sample = sampleTimeline(keyframes, elapsed);
+          camera.position.set(sample.position.x, sample.position.y, sample.position.z);
+          currentTargetRef.current.set(sample.target.x, sample.target.y, sample.target.z);
+          camera.lookAt(currentTargetRef.current);
+          if (controls) {
+            controls.target.copy(currentTargetRef.current);
+          }
+          renderer.render(scene, camera);
+          frames.push(renderer.domElement.toDataURL('image/png'));
+          await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
-        renderer.render(scene, camera);
-        frames.push(renderer.domElement.toDataURL('image/png'));
-        await new Promise((resolve) => window.setTimeout(resolve, 0));
-      }
-
-      renderer.setPixelRatio(originalPixelRatio);
-      renderer.setSize(originalSize.x, originalSize.y, false);
-      camera.aspect = originalSize.x / Math.max(originalSize.y, 1);
-      camera.position.copy(originalPosition);
-      currentTargetRef.current.copy(originalTarget);
-      camera.lookAt(currentTargetRef.current);
-      camera.updateProjectionMatrix();
-      if (controls) {
-        controls.target.copy(originalTarget);
+      } finally {
+        timelineBusyRef.current = false;
+        renderer.setPixelRatio(originalPixelRatio);
+        renderer.setSize(originalSize.x, originalSize.y, false);
+        camera.aspect = originalSize.x / Math.max(originalSize.y, 1);
+        camera.position.copy(originalPosition);
+        currentTargetRef.current.copy(originalTarget);
+        camera.lookAt(currentTargetRef.current);
+        camera.updateProjectionMatrix();
+        if (controls) {
+          controls.target.copy(originalTarget);
+        }
       }
 
       return frames;

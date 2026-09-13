@@ -166,8 +166,15 @@ export function App() {
   };
 
   const saveProject = async () => {
-    const saved = await window.electronAPI.saveProject(project);
-    setStatus(saved ? `Project saved to ${saved.path}.` : 'Save canceled.');
+    setBusy(true);
+    try {
+      const saved = await window.electronAPI.saveProject(project);
+      setStatus(saved ? `Project saved to ${saved.path}.` : 'Save canceled.');
+    } catch (error) {
+      setStatus(`Save failed: ${(error as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const loadProject = async () => {
